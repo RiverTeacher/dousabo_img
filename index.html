@@ -40,7 +40,13 @@
             width: 100%;
         }
         #uploadBtn:disabled { background-color: #ccc; cursor: not-allowed; }
-        #message { margin-top: 20px; font-weight: bold; min-height: 1.2em; }
+        #message { 
+            margin-top: 20px; 
+            font-weight: bold; 
+            min-height: 1.2em; 
+            display: flex;
+            align-items: center;
+        }
         .success { color: #28a745; }
         .error { color: #dc3545; }
         .info { color: #007bff; }
@@ -51,9 +57,26 @@
             border: 1px solid #ddd; 
             border-radius: 4px;
             word-break: break-all;
+            display: none; 
+        }
+
+        /* ローディングスピナーのスタイル */
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
             display: none; /* 初期状態は非表示 */
         }
-        .url-block { margin-bottom: 10px; }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .loading .spinner { display: block; }
     </style>
 </head>
 <body>
@@ -65,25 +88,31 @@
             <p>画像をここにドロップ、またはクリックして選択</p>
         </div>
         <button onclick="uploadImage()" disabled id="uploadBtn">アップロード開始</button>
-        <div id="message"></div>
+        <div id="message">
+            <div id="loading-spinner" class="spinner"></div>
+            <span id="message-text">ファイルを選択してください。</span>
+        </div>
         <div id="url-output"></div>
     </div>
 
     <script>
         const OWNER = "RiverTeacher";
         const REPO = "dousabo_img";
-        // ⚠️ ここを新しいGASのURLに書き換えてください ⚠️
+        // 💡 ユーザー指定のGAS URLを設定
         const GAS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbzxCa7hx_eQBImhY3HxZ9OuBi1tZ6dCKpv2szQejHGgwnPrBXU-uLQO2YcSaNU9s2pU/exec"; 
 
         const DROP_AREA = document.getElementById('drop-area');
         const FILE_ELEM = document.getElementById('fileElem');
         const UPLOAD_BTN = document.getElementById('uploadBtn');
         const MESSAGE_DIV = document.getElementById('message');
+        const MESSAGE_TEXT = document.getElementById('message-text');
+        const SPINNER = document.getElementById('loading-spinner');
         const URL_OUTPUT = document.getElementById('url-output');
 
         let selectedFile = null;
+        const LOADING_DELAY_MS = 4000; // 4秒間のロード時間
 
-        // ドラッグ＆ドロップ関連
+        // ドラッグ＆ドロップ関連 (省略)
         DROP_AREA.addEventListener('click', () => FILE_ELEM.click());
         FILE_ELEM.addEventListener('change', (e) => handleFile(e.target.files[0]));
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -104,14 +133,15 @@
             UPLOAD_BTN.disabled = false;
         }
 
-        function showMsg(text, type) {
-            MESSAGE_DIV.textContent = text;
-            MESSAGE_DIV.className = type;
+        function showMsg(text, type, showSpinner = false) {
+            MESSAGE_TEXT.textContent = text;
+            MESSAGE_DIV.className = type + (showSpinner ? ' loading' : '');
+            SPINNER.style.display = showSpinner ? 'block' : 'none';
         }
 
         function uploadImage() {
             if (!selectedFile) return;
-            showMsg('🔄 アップロード中...', 'info');
+            showMsg('🔄 GASサーバーへアップロード中...', 'info', true);
             UPLOAD_BTN.disabled = true;
 
             const reader = new FileReader();
@@ -130,37 +160,35 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 200) {
+                        // 1. GASからのコミット成功応答を確認
+                        
+                        // 2. ロード演出を開始
+                        showMsg('🔗 リンクを生成中（Pagesの反映を待機）...', 'info', true);
+                        
                         const path = data.content.path; // images/123_file.jpg
-                        
-                        // 1. GitHub Pages URL (ご要望の形式)
-                        // 形式: https://<ユーザー名>.github.io/<リポジトリ名>/<ファイルパス>
                         const pagesUrl = `https://${OWNER}.github.io/${REPO}/${path}`; 
-                        
-                        // 2. Raw URL (CDNとして利用可能)
-                        const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
-                        
-                        showMsg('🎉 アップロード成功！', 'success');
-                        URL_OUTPUT.style.display = 'block';
-                        URL_OUTPUT.innerHTML = `
-                            <div class="url-block">
-                                <strong>ウェブサイトURL (GitHub Pages形式):</strong><br>
+
+                        // 3. 意図的に遅延を発生させる
+                        setTimeout(() => {
+                            // 4. 4秒後に最終的なURLを表示
+                            showMsg('🎉 アップロードとリンク生成が完了しました！', 'success', false);
+                            URL_OUTPUT.style.display = 'block';
+                            URL_OUTPUT.innerHTML = `
+                                <strong>ウェブサイトURL (Pages形式):</strong><br>
                                 <a href="${pagesUrl}" target="_blank">${pagesUrl}</a>
-                            </div>
-                            <div class="url-block">
-                                <strong>RawコンテンツURL:</strong><br>
-                                <a href="${rawUrl}" target="_blank">${rawUrl}</a>
-                            </div>
-                        `;
-                        selectedFile = null;
+                            `;
+                            selectedFile = null;
+                            UPLOAD_BTN.disabled = false;
+                        }, LOADING_DELAY_MS);
+
                     } else {
+                        // GAS/GitHubからのエラー処理
                         throw new Error(data.message);
                     }
                 })
                 .catch(error => {
                     console.error(error);
-                    showMsg(`❌ 失敗: ${error.message}`, 'error');
-                })
-                .finally(() => {
+                    showMsg(`❌ 失敗: ${error.message}`, 'error', false);
                     UPLOAD_BTN.disabled = false;
                 });
             };
