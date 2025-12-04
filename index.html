@@ -53,6 +53,7 @@
             word-break: break-all;
             display: none; /* 初期状態は非表示 */
         }
+        .url-block { margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -71,9 +72,8 @@
     <script>
         const OWNER = "RiverTeacher";
         const REPO = "dousabo_img";
-        // ↓↓↓↓↓ ここを新しいGASのURLに書き換えてください ↓↓↓↓↓
+        // ⚠️ ここを新しいGASのURLに書き換えてください ⚠️
         const GAS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbzxCa7hx_eQBImhY3HxZ9OuBi1tZ6dCKpv2szQejHGgwnPrBXU-uLQO2YcSaNU9s2pU/exec"; 
-        // ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 
         const DROP_AREA = document.getElementById('drop-area');
         const FILE_ELEM = document.getElementById('fileElem');
@@ -118,15 +118,11 @@
             reader.onloadend = function() {
                 const base64Content = reader.result.split(',')[1];
                 
-                // GASに送るデータ
                 const payload = {
                     fileName: selectedFile.name,
                     base64Content: base64Content
                 };
 
-                // ★ここが最重要ポイント★
-                // headersを指定せず、bodyに文字列を入れることで「Simple Request」にする
-                // これでPreflight (OPTIONS) を回避する
                 fetch(GAS_ENDPOINT_URL, {
                     method: 'POST',
                     body: JSON.stringify(payload)
@@ -134,15 +130,26 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 200) {
-                        const path = data.content.path;
-                        const cdnUrl = data.content.download_url;
+                        const path = data.content.path; // images/123_file.jpg
+                        
+                        // 1. GitHub Pages URL (ご要望の形式)
+                        // 形式: https://<ユーザー名>.github.io/<リポジトリ名>/<ファイルパス>
+                        const pagesUrl = `https://${OWNER}.github.io/${REPO}/${path}`; 
+                        
+                        // 2. Raw URL (CDNとして利用可能)
                         const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
                         
                         showMsg('🎉 アップロード成功！', 'success');
                         URL_OUTPUT.style.display = 'block';
                         URL_OUTPUT.innerHTML = `
-                            <strong>URL:</strong><br>
-                            <a href="${cdnUrl}" target="_blank">${cdnUrl}</a>
+                            <div class="url-block">
+                                <strong>ウェブサイトURL (GitHub Pages形式):</strong><br>
+                                <a href="${pagesUrl}" target="_blank">${pagesUrl}</a>
+                            </div>
+                            <div class="url-block">
+                                <strong>RawコンテンツURL:</strong><br>
+                                <a href="${rawUrl}" target="_blank">${rawUrl}</a>
+                            </div>
                         `;
                         selectedFile = null;
                     } else {
@@ -162,5 +169,4 @@
     </script>
 </body>
 </html>
-
 
