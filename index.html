@@ -1,117 +1,229 @@
-const OWNER = "RiverTeacher"; 
-const REPO = "dousabo_img";
-const BRANCH = "main"; // コミット先のブランチ名
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>セキュアなGitHub画像アップローダー (Cloudflare Workers)</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            padding: 20px; 
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        h2 { 
+            color: #007bff; 
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        #drop-area { 
+            border: 3px dashed #007bff; 
+            padding: 50px; 
+            text-align: center; 
+            cursor: pointer; 
+            transition: border-color 0.3s;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        #drop-area.highlight {
+            border-color: #28a745;
+            background-color: #e9f7ee;
+        }
+        #uploadBtn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        #uploadBtn:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        #uploadBtn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #message { 
+            margin-top: 20px; 
+            font-weight: bold; 
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .info { color: #007bff; }
 
-/**
- * HTTP POSTリクエストを処理します。
- * フロントエンドから送られた画像データを受け取り、GitHub APIにコミットします。
- */
-function doPost(e) {
-  // POSTリクエストがない場合、またはデータが不正な場合
-  if (!e || !e.postData || !e.postData.contents) {
-    return createCorsResponse({ message: "Invalid request (no content)" }, 400);
-  }
-  
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const fileName = data.fileName;
-    const base64Content = data.base64Content;
-    
-    // 1. PATをスクリプトプロパティから安全に読み込む
-    const token = PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN');
-    if (!token) {
-        return createCorsResponse(
-            { message: "Server configuration error: GitHub Token not set." }, 
-            500
-        );
-    }
-    
-    // 2. GitHub APIエンドポイントとペイロードの準備
-    const timestamp = new Date().getTime();
-    const path = `images/${timestamp}_${fileName}`;
-    const githubApiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
-    
-    const payload = {
-      message: `feat(upload): Add image ${fileName} via GAS`,
-      content: base64Content,
-      branch: BRANCH
-    };
-    
-    const options = {
-      method: 'put',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': OWNER
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true // エラー応答をキャッチするために必須
-    };
-    
-    // 3. GitHub APIへのリクエスト実行
-    const response = UrlFetchApp.fetch(githubApiUrl, options);
-    const responseCode = response.getResponseCode();
-    const responseBody = response.getContentText();
-    
-    // 4. 結果の返却
-    if (responseCode >= 200 && responseCode < 300) {
-      return createCorsResponse(JSON.parse(responseBody), 200);
-    } else {
-      // GitHubからのエラー応答を返す
-      const errorBody = JSON.parse(responseBody);
-      return createCorsResponse(
-          { 
-              message: `GitHub API Error (${responseCode}): ${errorBody.message || 'Unknown error'}`,
-              status: responseCode
-          }, 
-          responseCode
-      );
-    }
+        #url-output { 
+            margin-top: 15px; 
+            padding: 15px; 
+            border: 1px solid #ddd; 
+            background-color: #f8f9fa; 
+            word-break: break-all; 
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        a { color: #007bff; }
+    </style>
+</head>
+<body>
 
-  } catch (e) {
-    return createCorsResponse(
-        { message: `Internal Error: ${e.message}`, status: 500 }, 
-        500
-    );
-  }
-}
+    <div class="container">
+        <h2>🖼️ Cloudflare Workers経由の画像アップローダー</h2>
+        
+        <p>※ 画像は **dousabo_img** のリポジトリにコミットされます。</p>
 
-/**
- * HTTP GETリクエストを処理します。OPTIONS (Preflight) リクエストの処理を兼ねます。
- */
-function doGet() {
-  // OPTIONSリクエストの処理 (CORS Preflight)
-  // GETとして処理されるため、CORSヘッダーのみを返します。
-  return createCorsResponse(null, 200);
-}
+        <div id="drop-area">
+            <input type="file" id="fileElem" accept="image/*" style="display: none;">
+            <p>画像をここにドラッグ＆ドロップするか、クリックしてファイルを選択</p>
+        </div>
 
-/**
- * JSON応答を作成し、CORSヘッダーを確実に追加するヘルパー関数。
- * @param {Object} content 返却するJSONオブジェクト。nullの場合はCORSヘッダーのみを返す。
- * @param {number} status 応答ステータスコード（GASは常に200を返すため、クライアント側でボディのstatusを確認する）
- * @returns {GoogleAppsScript.Content.TextOutput} CORSヘッダー付きの応答オブジェクト
- */
-function createCorsResponse(content, status) {
-  let output;
-  
-  if (content === null) {
-      // doGet/OPTIONSリクエストの場合
-      output = ContentService.createTextOutput('');
-  } else {
-      // doPostリクエストの場合
-      // 成功時/エラー時のステータスコードをJSONボディに追加（GASの制約対策）
-      if (typeof content === 'object') {
-          content.status = status;
-      }
-      output = ContentService.createTextOutput(JSON.stringify(content))
-        .setMimeType(ContentService.MimeType.JSON);
-  }
-  
-  // 💡 CORSヘッダーを追記する (GASでCORSをパスするための最も確実な方法)
-  output.append(`\n\nAccess-Control-Allow-Origin: *`);
-  output.append(`\nAccess-Control-Allow-Methods: POST, OPTIONS`);
-  output.append(`\nAccess-Control-Allow-Headers: Content-Type`);
-  output.append(`\nAccess-Control-Max-Age: 86400`); // プリフライト結果をキャッシュ
+        <button onclick="uploadImage()" disabled id="uploadBtn">⬆️ アップロード開始</button>
 
-  return output;
-}
+        <div id="message" class="info">ファイルを選択してください。</div>
+        
+        <div id="url-output"></div>
+    </div>
+
+    <script>
+        // ***************************************************************
+        // *** 🛠️ 設定済み情報 (ユーザー指定) ***
+        // ***************************************************************
+        const OWNER = "RiverTeacher";             // GitHubユーザー名
+        const REPO = "dousabo_img";              // リポジトリ名
+        const WORKER_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbzxCa7hx_eQBImhY3HxZ9OuBi1tZ6dCKpv2szQejHGgwnPrBXU-uLQO2YcSaNU9s2pU/exec"; 
+                                                          // Cloudflare WorkerのURL
+        // ***************************************************************
+
+        const DROP_AREA = document.getElementById('drop-area');
+        const FILE_ELEM = document.getElementById('fileElem');
+        const UPLOAD_BTN = document.getElementById('uploadBtn');
+        const MESSAGE_DIV = document.getElementById('message');
+        const URL_OUTPUT = document.getElementById('url-output');
+
+        let selectedFile = null;
+
+        // --- イベントリスナー設定 ---
+        DROP_AREA.addEventListener('click', () => FILE_ELEM.click());
+        FILE_ELEM.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, unhighlight, false);
+        });
+
+        DROP_AREA.addEventListener('drop', handleDrop, false);
+        
+        // --- UIヘルパー関数 ---
+        function preventDefaults (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function highlight() {
+            DROP_AREA.classList.add('highlight');
+        }
+
+        function unhighlight() {
+            DROP_AREA.classList.remove('highlight');
+        }
+
+        function handleDrop(e) {
+            let dt = e.dataTransfer;
+            let files = dt.files;
+            handleFile(files[0]);
+        }
+        
+        // ファイル選択時の処理
+        function handleFile(file) {
+            URL_OUTPUT.textContent = '';
+            if (!file || !file.type.startsWith('image/')) {
+                MESSAGE_DIV.textContent = '❌ 画像ファイルを選択してください。';
+                MESSAGE_DIV.className = 'error';
+                selectedFile = null;
+                UPLOAD_BTN.disabled = true;
+                return;
+            }
+            selectedFile = file;
+            MESSAGE_DIV.textContent = `✅ ファイル選択完了: ${file.name}`;
+            MESSAGE_DIV.className = 'success';
+            UPLOAD_BTN.disabled = false;
+        }
+
+        // --- メインのアップロード処理 ---
+        function uploadImage() {
+            if (!selectedFile) return;
+            
+            URL_OUTPUT.textContent = '';
+            MESSAGE_DIV.textContent = '🔄 アップロード中...';
+            MESSAGE_DIV.className = 'info';
+            UPLOAD_BTN.disabled = true;
+
+            const reader = new FileReader();
+            reader.onloadend = function() {
+                // Base64エンコードされた文字列からプレフィックス (data:image/...) を除去
+                const base64Content = reader.result.split(',')[1];
+                
+                // Workerへ送信するボディ
+                const requestBody = JSON.stringify({
+                    fileName: selectedFile.name,
+                    base64Content: base64Content // トークンは含めない
+                });
+                
+                fetch(WORKER_ENDPOINT_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: requestBody
+                })
+                .then(response => response.json().then(data => {
+                    if (!response.ok) {
+                        // WorkerまたはGitHubからのエラー処理
+                        throw new Error(data.message || response.statusText);
+                    }
+                    return data;
+                }))
+                .then(data => {
+                    const path = data.content.path;
+                    // GitHub Pagesのデフォルトブランチは通常 'main'
+                    const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
+                    
+                    MESSAGE_DIV.textContent = `🎉 アップロード成功！`;
+                    MESSAGE_DIV.className = 'success';
+                    URL_OUTPUT.innerHTML = `
+                        **GitHub公開URL (CDN):**<br> 
+                        <a href="${data.content.download_url}" target="_blank">${data.content.download_url}</a><br><br>
+                        **RawコンテンツURL:**<br>
+                        <a href="${rawUrl}" target="_blank">${rawUrl}</a>
+                    `;
+                    UPLOAD_BTN.disabled = false;
+                    selectedFile = null; // 連続アップロードのためにファイルをリセット
+                })
+                .catch(error => {
+                    MESSAGE_DIV.textContent = `❌ アップロード失敗: ${error.message}`;
+                    MESSAGE_DIV.className = 'error';
+                    console.error('Upload Error:', error);
+                    UPLOAD_BTN.disabled = false;
+                });
+            };
+            reader.readAsDataURL(selectedFile);
+        }
+    </script>
+</body>
+</html>
