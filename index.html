@@ -1,0 +1,73 @@
+<script>
+    // *** ⚠️ 必須：WorkerのエンドポイントURLに置き換えてください ⚠️ ***
+    const WORKER_ENDPOINT_URL = "https://purple-sun-747c.ryuheifirebase.workers.dev/";
+    const OWNER = "RiverTeacher";
+    const REPO = "dousabo_img";
+    // ***************************************************************
+
+    const DROP_AREA = document.getElementById('drop-area');
+    // ... (その他の変数宣言は変更なし)
+
+    let selectedFile = null;
+    // ... (handleFile までのコードは変更なし)
+
+    // Base64への変換とWorkersへのアップロード処理
+    function uploadImage() {
+        if (!selectedFile) {
+            MESSAGE_DIV.textContent = '❌ アップロードする画像が選択されていません。';
+            return;
+        }
+
+        URL_OUTPUT.textContent = '';
+        MESSAGE_DIV.textContent = '🔄 アップロード中 (Workers経由)...';
+        UPLOAD_BTN.disabled = true;
+
+        const reader = new FileReader();
+        reader.onloadend = function() {
+            // Base64エンコードされた文字列からプレフィックス (data:image/...) を除去
+            const base64Content = reader.result.split(',')[1];
+
+            // Workerへ送信するボディ
+            const requestBody = JSON.stringify({
+                fileName: selectedFile.name,
+                base64Content: base64Content // トークンは含めない！
+            });
+
+            fetch(WORKER_ENDPOINT_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                    // ⚠️ ここにAuthorizationヘッダーは不要 ⚠️
+                },
+                body: requestBody
+            })
+            .then(response => response.json().then(data => {
+                if (!response.ok) {
+                    // WorkerまたはGitHubからのエラー処理
+                    throw new Error(data.message || 'アップロード中に不明なエラーが発生しました');
+                }
+                return data;
+            }))
+            .then(data => {
+                // GitHub APIの応答には、コミットされたファイルの情報 (data.content) が含まれている
+                const path = data.content.path;
+                // Pagesで公開されるURLを組み立てる (ブランチ名が 'main' の場合)
+                const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
+
+                MESSAGE_DIV.textContent = `🎉 アップロード成功！`;
+                URL_OUTPUT.innerHTML = `
+                    公開URL (CDN): <a href="${data.content.download_url}" target="_blank">${data.content.download_url}</a><br>
+                    Raw URL: <a href="${rawUrl}" target="_blank">${rawUrl}</a>
+                `;
+                UPLOAD_BTN.disabled = false;
+                selectedFile = null;
+            })
+            .catch(error => {
+                MESSAGE_DIV.textContent = `❌ アップロード失敗: ${error.message}`;
+                console.error('Upload Error:', error);
+                UPLOAD_BTN.disabled = false;
+            });
+        };
+        reader.readAsDataURL(selectedFile);
+    }
+</script>
