@@ -1,73 +1,229 @@
-<script>
-    // *** ⚠️ 必須：WorkerのエンドポイントURLに置き換えてください ⚠️ ***
-    const WORKER_ENDPOINT_URL = "https://purple-sun-747c.ryuheifirebase.workers.dev/";
-    const OWNER = "RiverTeacher";
-    const REPO = "dousabo_img";
-    // ***************************************************************
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>セキュアなGitHub画像アップローダー (Cloudflare Workers)</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            padding: 20px; 
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        h2 { 
+            color: #007bff; 
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        #drop-area { 
+            border: 3px dashed #007bff; 
+            padding: 50px; 
+            text-align: center; 
+            cursor: pointer; 
+            transition: border-color 0.3s;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        #drop-area.highlight {
+            border-color: #28a745;
+            background-color: #e9f7ee;
+        }
+        #uploadBtn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        #uploadBtn:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        #uploadBtn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #message { 
+            margin-top: 20px; 
+            font-weight: bold; 
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .info { color: #007bff; }
 
-    const DROP_AREA = document.getElementById('drop-area');
-    // ... (その他の変数宣言は変更なし)
+        #url-output { 
+            margin-top: 15px; 
+            padding: 15px; 
+            border: 1px solid #ddd; 
+            background-color: #f8f9fa; 
+            word-break: break-all; 
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        a { color: #007bff; }
+    </style>
+</head>
+<body>
 
-    let selectedFile = null;
-    // ... (handleFile までのコードは変更なし)
+    <div class="container">
+        <h2>🖼️ Cloudflare Workers経由の画像アップローダー</h2>
+        
+        <p>※ 画像は **dousabo_img** のリポジトリにコミットされます。</p>
 
-    // Base64への変換とWorkersへのアップロード処理
-    function uploadImage() {
-        if (!selectedFile) {
-            MESSAGE_DIV.textContent = '❌ アップロードする画像が選択されていません。';
-            return;
+        <div id="drop-area">
+            <input type="file" id="fileElem" accept="image/*" style="display: none;">
+            <p>画像をここにドラッグ＆ドロップするか、クリックしてファイルを選択</p>
+        </div>
+
+        <button onclick="uploadImage()" disabled id="uploadBtn">⬆️ アップロード開始</button>
+
+        <div id="message" class="info">ファイルを選択してください。</div>
+        
+        <div id="url-output"></div>
+    </div>
+
+    <script>
+        // ***************************************************************
+        // *** 🛠️ 設定済み情報 (ユーザー指定) ***
+        // ***************************************************************
+        const OWNER = "RiverTeacher";             // GitHubユーザー名
+        const REPO = "dousabo_img";              // リポジトリ名
+        const WORKER_ENDPOINT_URL = "https://purple-sun-747c.ryuheifirebase.workers.dev/"; 
+                                                          // Cloudflare WorkerのURL
+        // ***************************************************************
+
+        const DROP_AREA = document.getElementById('drop-area');
+        const FILE_ELEM = document.getElementById('fileElem');
+        const UPLOAD_BTN = document.getElementById('uploadBtn');
+        const MESSAGE_DIV = document.getElementById('message');
+        const URL_OUTPUT = document.getElementById('url-output');
+
+        let selectedFile = null;
+
+        // --- イベントリスナー設定 ---
+        DROP_AREA.addEventListener('click', () => FILE_ELEM.click());
+        FILE_ELEM.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            DROP_AREA.addEventListener(eventName, unhighlight, false);
+        });
+
+        DROP_AREA.addEventListener('drop', handleDrop, false);
+        
+        // --- UIヘルパー関数 ---
+        function preventDefaults (e) {
+            e.preventDefault();
+            e.stopPropagation();
         }
 
-        URL_OUTPUT.textContent = '';
-        MESSAGE_DIV.textContent = '🔄 アップロード中 (Workers経由)...';
-        UPLOAD_BTN.disabled = true;
+        function highlight() {
+            DROP_AREA.classList.add('highlight');
+        }
 
-        const reader = new FileReader();
-        reader.onloadend = function() {
-            // Base64エンコードされた文字列からプレフィックス (data:image/...) を除去
-            const base64Content = reader.result.split(',')[1];
+        function unhighlight() {
+            DROP_AREA.classList.remove('highlight');
+        }
 
-            // Workerへ送信するボディ
-            const requestBody = JSON.stringify({
-                fileName: selectedFile.name,
-                base64Content: base64Content // トークンは含めない！
-            });
-
-            fetch(WORKER_ENDPOINT_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                    // ⚠️ ここにAuthorizationヘッダーは不要 ⚠️
-                },
-                body: requestBody
-            })
-            .then(response => response.json().then(data => {
-                if (!response.ok) {
-                    // WorkerまたはGitHubからのエラー処理
-                    throw new Error(data.message || 'アップロード中に不明なエラーが発生しました');
-                }
-                return data;
-            }))
-            .then(data => {
-                // GitHub APIの応答には、コミットされたファイルの情報 (data.content) が含まれている
-                const path = data.content.path;
-                // Pagesで公開されるURLを組み立てる (ブランチ名が 'main' の場合)
-                const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
-
-                MESSAGE_DIV.textContent = `🎉 アップロード成功！`;
-                URL_OUTPUT.innerHTML = `
-                    公開URL (CDN): <a href="${data.content.download_url}" target="_blank">${data.content.download_url}</a><br>
-                    Raw URL: <a href="${rawUrl}" target="_blank">${rawUrl}</a>
-                `;
-                UPLOAD_BTN.disabled = false;
+        function handleDrop(e) {
+            let dt = e.dataTransfer;
+            let files = dt.files;
+            handleFile(files[0]);
+        }
+        
+        // ファイル選択時の処理
+        function handleFile(file) {
+            URL_OUTPUT.textContent = '';
+            if (!file || !file.type.startsWith('image/')) {
+                MESSAGE_DIV.textContent = '❌ 画像ファイルを選択してください。';
+                MESSAGE_DIV.className = 'error';
                 selectedFile = null;
-            })
-            .catch(error => {
-                MESSAGE_DIV.textContent = `❌ アップロード失敗: ${error.message}`;
-                console.error('Upload Error:', error);
-                UPLOAD_BTN.disabled = false;
-            });
-        };
-        reader.readAsDataURL(selectedFile);
-    }
-</script>
+                UPLOAD_BTN.disabled = true;
+                return;
+            }
+            selectedFile = file;
+            MESSAGE_DIV.textContent = `✅ ファイル選択完了: ${file.name}`;
+            MESSAGE_DIV.className = 'success';
+            UPLOAD_BTN.disabled = false;
+        }
+
+        // --- メインのアップロード処理 ---
+        function uploadImage() {
+            if (!selectedFile) return;
+            
+            URL_OUTPUT.textContent = '';
+            MESSAGE_DIV.textContent = '🔄 アップロード中...';
+            MESSAGE_DIV.className = 'info';
+            UPLOAD_BTN.disabled = true;
+
+            const reader = new FileReader();
+            reader.onloadend = function() {
+                // Base64エンコードされた文字列からプレフィックス (data:image/...) を除去
+                const base64Content = reader.result.split(',')[1];
+                
+                // Workerへ送信するボディ
+                const requestBody = JSON.stringify({
+                    fileName: selectedFile.name,
+                    base64Content: base64Content // トークンは含めない
+                });
+                
+                fetch(WORKER_ENDPOINT_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: requestBody
+                })
+                .then(response => response.json().then(data => {
+                    if (!response.ok) {
+                        // WorkerまたはGitHubからのエラー処理
+                        throw new Error(data.message || response.statusText);
+                    }
+                    return data;
+                }))
+                .then(data => {
+                    const path = data.content.path;
+                    // GitHub Pagesのデフォルトブランチは通常 'main'
+                    const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${path}`;
+                    
+                    MESSAGE_DIV.textContent = `🎉 アップロード成功！`;
+                    MESSAGE_DIV.className = 'success';
+                    URL_OUTPUT.innerHTML = `
+                        **GitHub公開URL (CDN):**<br> 
+                        <a href="${data.content.download_url}" target="_blank">${data.content.download_url}</a><br><br>
+                        **RawコンテンツURL:**<br>
+                        <a href="${rawUrl}" target="_blank">${rawUrl}</a>
+                    `;
+                    UPLOAD_BTN.disabled = false;
+                    selectedFile = null; // 連続アップロードのためにファイルをリセット
+                })
+                .catch(error => {
+                    MESSAGE_DIV.textContent = `❌ アップロード失敗: ${error.message}`;
+                    MESSAGE_DIV.className = 'error';
+                    console.error('Upload Error:', error);
+                    UPLOAD_BTN.disabled = false;
+                });
+            };
+            reader.readAsDataURL(selectedFile);
+        }
+    </script>
+</body>
+</html>
